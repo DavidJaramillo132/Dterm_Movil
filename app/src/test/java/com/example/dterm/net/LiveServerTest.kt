@@ -44,7 +44,7 @@ class LiveServerTest {
         try {
             Thread.sleep(500)
 
-            val screen = TerminalBuffer()
+            val screen = Emulator(40, 80)
             val sawMarker = CountDownLatch(1)
 
             val link = DtermConnection("127.0.0.1", port, secret, "livetest")
@@ -53,8 +53,8 @@ class LiveServerTest {
             thread(isDaemon = true) {
                 runCatching {
                     link.readLoop { chunk ->
-                        screen.append(chunk)
-                        if (screen.snapshot().contains("KOTLIN-OK")) sawMarker.countDown()
+                        screen.feed(chunk)
+                        if (screen.plainText().contains("KOTLIN-OK")) sawMarker.countDown()
                     }
                 }
             }
@@ -63,7 +63,7 @@ class LiveServerTest {
             link.sendInput("echo KOTLIN-OK\n")
 
             assertTrue(
-                "the shell never answered; buffer was:\n${screen.snapshot()}",
+                "the shell never answered; the screen held:\n${screen.plainText()}",
                 sawMarker.await(10, TimeUnit.SECONDS),
             )
 
@@ -105,3 +105,7 @@ class LiveServerTest {
         }
     }
 }
+
+/** The whole screen as plain text, for asserting on what the shell printed. */
+private fun Emulator.plainText(): String =
+    snapshot().joinToString("\n") { row -> row.joinToString("") { it.text } }

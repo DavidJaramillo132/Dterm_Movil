@@ -12,6 +12,7 @@ Built as a learning project, not as a Termux replacement — see
 | Version | What works |
 | --- | --- |
 | v0.1 | Frame codec, HMAC-SHA256 handshake, session attach, live output, line input |
+| v0.2 | Terminal emulation, colour, the real window size, per-keystroke input |
 
 ## Requirements
 
@@ -27,29 +28,30 @@ Built as a learning project, not as a Termux replacement — see
 ./gradlew test              # unit tests, no device needed
 ```
 
-## Running it against a server over USB
+## Running it against a server
 
-`adb reverse` tunnels a port through the USB cable, so the phone reaches the
-server on its own `127.0.0.1` without touching Wi-Fi or the host firewall.
+With the phone and the host on the same network, nothing but the port has to be
+open.
 
 ```sh
-# On the phone: Settings -> About -> tap "Build number" 7 times,
-# then Developer options -> USB debugging.
-
-adb devices                          # authorise the prompt on the phone
-adb reverse tcp:4242 tcp:4242        # phone's localhost:4242 -> host's 4242
-
 # On the host, if there is no secret yet:
 mkdir -p ~/.dterm && openssl rand -hex 32 > ~/.dterm/secret && chmod 600 ~/.dterm/secret
 
-dterm 4242                           # start the server
+sudo firewall-cmd --add-port=4242/tcp    # Fedora; adjust for your firewall
+dterm 4242
 ```
 
-In the app, leave the host as `127.0.0.1`, paste the secret from
-`~/.dterm/secret`, and connect.
+In the app, enter the host's LAN address (`ip -4 -br addr` will show it), the
+port, and the secret from `~/.dterm/secret`.
 
-Over Wi-Fi instead, use the host's LAN address and open the port
-(`sudo firewall-cmd --add-port=4242/tcp` on Fedora).
+If the connection times out with no error from the firewall, check whether the
+host has two interfaces on the same subnet. The reply then leaves by a different
+interface than the request arrived on, and something in between will usually
+drop it. Connecting to the other interface's address is the quick way to tell.
+
+Over a USB cable instead, `adb reverse tcp:4242 tcp:4242` tunnels the port
+through it and the app connects to its own `127.0.0.1`, with no firewall
+involved. That needs USB debugging enabled on the phone.
 
 ## Security
 
@@ -98,11 +100,29 @@ what catches a divergence — it runs the real server binary and talks to it.
 app/src/main/java/com/example/dterm/
 ├── net/Protocol.kt          frame types, reader, writer
 ├── net/Auth.kt              HMAC-SHA256 over the challenge
-├── net/TerminalBuffer.kt    ANSI stripping and UTF-8 reassembly
+├── net/Emulator.kt          the cell grid, cursor and escape sequences
+├── net/Keys.kt              what each key sends down the wire
 ├── net/DtermConnection.kt   socket, handshake, read loop
 ├── TerminalViewModel.kt     connection state, survives rotation
 └── MainActivity.kt          connection form and terminal view
 ```
+
+## How the screen works
+
+`Emulator` keeps a grid of cells and a cursor, not a string of text. That
+distinction is the whole reason full-screen programs work: they do not print
+forwards, they say "put the cursor at row 3 column 1, erase to the end of the
+line, write this", dozens of times a second. Those instructions only mean
+something against a grid that can be overwritten in place.
+
+Implemented: cursor movement, erase and insert and delete, a scrolling region,
+the alternate screen, auto-wrap deferred at the margin, and colour up to direct
+24-bit values. Not implemented: mouse reporting, character sets, double-width
+characters, and the status-report queries that expect a reply.
+
+The view repaints on a timer rather than on every frame that arrives, because a
+busy program can emit dozens a second and each one would otherwise rebuild the
+whole screen on the UI thread.
 
 ## Testing
 
@@ -117,18 +137,22 @@ when the binary is missing, so set `DTERM_SERVER` if it is not at
 
 Watch for tests that pass without proving anything. The suite checks its own
 inputs where it can: `AuthTest` compares against a MAC produced independently by
-`openssl dgst -sha256 -mac HMAC`, and `TerminalBufferTest` feeds in escape
-sequences captured from a real `ls --color=always`.
+`openssl dgst -sha256 -mac HMAC`, and `EmulatorTest` asserts on the sequences a
+full-screen program really sends, including that a repaint replaces the previous
+frame rather than stacking below it.
+
+A green suite is worth what its worst test is worth. Breaking a behaviour on
+purpose and watching the right test go red is the only way to know it bites.
 
 ## Limitations
 
-This is not a terminal emulator. A real one keeps a grid of cells and a cursor
-that can be moved anywhere, which is how `vim` and `htop` repaint the screen.
-This client strips the control sequences and appends what is left, so:
-
-- **Full-screen programs do not work.** `vim`, `htop`, `nano` and `less` will
-  stack their repaints instead of replacing them.
-- **No colours.** They are removed along with everything else in the sequence.
-- **No control keys.** There is no way to send Ctrl+C yet.
-- **Input is line-based.** A line is sent when you press Send, not per keystroke.
-- **The terminal size is fixed** at 40×80 rather than measured from the screen.
+- **No mouse.** Programs that offer click targets will not see them.
+- **Wide characters count as one cell.** CJK text and some emoji will sit a
+  column out of place.
+- **No status-report replies.** A program asking the terminal to identify
+  itself, or to say where the cursor is, gets no answer.
+- **Ctrl is a latch, not a held key**, because a soft keyboard has no modifier
+  to hold. Tap CTRL, then tap a letter.
+- **Backspace relies on padding.** A soft keyboard reports nothing when
+  Backspace is pressed on an empty field, so the input keeps invisible
+  characters for it to delete. A keyboard that ignores this will not send it.

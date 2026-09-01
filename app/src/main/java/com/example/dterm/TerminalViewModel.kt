@@ -3,9 +3,13 @@ package com.example.dterm
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dterm.net.DtermConnection
-import com.example.dterm.net.TerminalBuffer
+import com.example.dterm.net.Emulator
+import com.example.dterm.net.Span
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,34 +29,39 @@ class TerminalViewModel : ViewModel() {
     data class UiState(
         val status: Status = Status.DISCONNECTED,
         val message: String = "",
-        val output: String = "",
+        val screen: List<List<Span>> = emptyList(),
+        val fullScreen: Boolean = false,
     )
 
-    private val screen = TerminalBuffer()
+    private val terminal = Emulator()
     private val state = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = state.asStateFlow()
 
+    // The reader thread writes into the emulator while the painter reads it.
+    private val lock = Any()
+    private val dirty = AtomicBoolean(false)
+
     private var connection: DtermConnection? = null
     private var worker: Job? = null
+    private var painter: Job? = null
 
-    // What the shell believes the window is. The view measures the real thing
-    // and calls resize(); until it does, this is only a starting guess.
     private var rows = 24
     private var cols = 80
 
     /**
      * Tells the shell how big the window actually is.
      *
-     * This is not cosmetic. Programs that draw a full screen — an editor, a
-     * pager, anything with a status bar — ask the kernel for the window size
-     * and lay themselves out to it. A wrong size means they draw off the edge
-     * or wrap in the middle of a line, no matter how good the renderer is.
+     * This is not cosmetic. Programs that draw a full screen ask the kernel for
+     * the window size and lay themselves out to it, so a wrong size garbles
+     * them no matter how good the renderer is.
      */
     fun resize(rows: Int, cols: Int) {
         if (rows == this.rows && cols == this.cols) return
 
         this.rows = rows
         this.cols = cols
+        synchronized(lock) { terminal.resize(rows, cols) }
+        dirty.set(true)
 
         val link = connection ?: return
         viewModelScope.launch(Dispatchers.IO) {
@@ -63,12 +72,15 @@ class TerminalViewModel : ViewModel() {
     fun connect(host: String, port: Int, secret: String, session: String) {
         if (state.value.status != Status.DISCONNECTED) return
 
-        screen.clear()
+        synchronized(lock) {
+            terminal.clear()
+            terminal.resize(rows, cols)
+        }
         state.value = UiState(status = Status.CONNECTING, message = "connecting to $host:$port…")
 
         worker = viewModelScope.launch {
             // Sockets on the main thread throw NetworkOnMainThreadException, so
-            // every byte of this runs on the IO dispatcher.
+            // every byte of this runs off it.
             withContext(Dispatchers.IO) {
                 val link = DtermConnection(host, port, secret, session)
                 connection = link
@@ -76,10 +88,11 @@ class TerminalViewModel : ViewModel() {
                 try {
                     link.open(rows, cols)
                     state.value = state.value.copy(status = Status.CONNECTED, message = "")
+                    painter = startPainting()
 
                     link.readLoop { chunk ->
-                        screen.append(chunk)
-                        state.value = state.value.copy(output = screen.snapshot())
+                        synchronized(lock) { terminal.feed(chunk) }
+                        dirty.set(true)
                     }
                 } catch (failure: Exception) {
                     state.value = state.value.copy(
@@ -87,6 +100,7 @@ class TerminalViewModel : ViewModel() {
                         message = failure.message ?: failure.javaClass.simpleName,
                     )
                 } finally {
+                    painter?.cancel()
                     link.close()
                     connection = null
 
@@ -101,9 +115,24 @@ class TerminalViewModel : ViewModel() {
         }
     }
 
-    /** Sends one line, with the newline the shell needs to act on it. */
-    fun submit(line: String) = send(line + "\n")
+    /**
+     * Repaints at a fixed rate rather than on every frame that arrives.
+     *
+     * A full-screen program can emit dozens of repaints a second, and each one
+     * would otherwise rebuild the whole screen on the UI thread. Coalescing
+     * them costs nothing visually: no display shows more than it can draw.
+     */
+    private fun startPainting(): Job = viewModelScope.launch(Dispatchers.Default) {
+        while (isActive) {
+            if (dirty.getAndSet(false)) {
+                val frame = synchronized(lock) { terminal.snapshot() to terminal.onAlternateScreen }
+                state.value = state.value.copy(screen = frame.first, fullScreen = frame.second)
+            }
+            delay(FRAME_MS)
+        }
+    }
 
+    /** Sends text exactly as typed. The shell decides what a key means. */
     fun send(text: String) {
         val link = connection ?: return
 
@@ -114,6 +143,7 @@ class TerminalViewModel : ViewModel() {
 
     fun disconnect() {
         // Closing the socket is what breaks readLoop out of its blocking read.
+        painter?.cancel()
         connection?.close()
         worker?.cancel()
     }
@@ -123,4 +153,7 @@ class TerminalViewModel : ViewModel() {
         super.onCleared()
     }
 
+    private companion object {
+        const val FRAME_MS = 33L   // about 30 repaints a second
+    }
 }
