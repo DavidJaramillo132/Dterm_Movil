@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -66,7 +70,7 @@ fun TerminalScreen(modifier: Modifier = Modifier, model: TerminalViewModel = vie
             Text(state.message, modifier.padding(16.dp))
 
         TerminalViewModel.Status.CONNECTED ->
-            Terminal(state.output, modifier, model::submit, model::disconnect)
+            Terminal(state.output, modifier, model::submit, model::resize, model::disconnect)
     }
 }
 
@@ -76,9 +80,10 @@ private fun ConnectForm(
     modifier: Modifier = Modifier,
     onConnect: (String, Int, String, String) -> Unit,
 ) {
-    // 127.0.0.1 is right when the phone is wired up with `adb reverse`, which
-    // tunnels the port over USB. Over Wi-Fi this is the machine's LAN address.
-    var host by rememberSaveable { mutableStateOf("127.0.0.1") }
+    // The address of the machine running the server, as the phone sees it.
+    // On a shared network that is the machine's LAN address; with
+    // `adb reverse tcp:4242 tcp:4242` over USB it is 127.0.0.1.
+    var host by rememberSaveable { mutableStateOf("") }
     var port by rememberSaveable { mutableStateOf("4242") }
     var secret by rememberSaveable { mutableStateOf("") }
     var session by rememberSaveable { mutableStateOf("default") }
@@ -95,6 +100,7 @@ private fun ConnectForm(
         )
 
         OutlinedTextField(host, { host = it }, label = { Text("Host") },
+            placeholder = { Text("192.168.1.10") },
             singleLine = true, keyboardOptions = plain, modifier = Modifier.fillMaxWidth())
 
         OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("Port") },
@@ -125,27 +131,48 @@ private fun Terminal(
     output: String,
     modifier: Modifier = Modifier,
     onSubmit: (String) -> Unit,
+    onResize: (Int, Int) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var line by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
 
+    val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+    val measurer = rememberTextMeasurer()
+
+    // One cell, in pixels. Averaging over a run of characters keeps the
+    // rounding error from accumulating across a whole line.
+    val cell = remember(style) {
+        val sample = measurer.measure("M".repeat(SAMPLE), style)
+        sample.size.width.toFloat() / SAMPLE to sample.size.height.toFloat()
+    }
+
     // New output should bring the view down with it, the way a terminal does.
     LaunchedEffect(output) { scroll.animateScrollTo(scroll.maxValue) }
 
     Column(modifier.fillMaxSize()) {
-        Text(
-            text = output,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = Color(0xFFD0D0D0),
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .background(Color(0xFF101010))
-                .verticalScroll(scroll)
-                .padding(8.dp),
-        )
+                .padding(8.dp)
+                // The viewport, not the text: the scrolling content is taller
+                // than the window, and it is the window the shell needs to know.
+                .onSizeChanged { size ->
+                    val cols = (size.width / cell.first).toInt().coerceIn(20, 500)
+                    val rows = (size.height / cell.second).toInt().coerceIn(4, 200)
+                    onResize(rows, cols)
+                },
+        ) {
+            Text(
+                text = output,
+                style = style,
+                color = Color(0xFFD0D0D0),
+                softWrap = false,
+                modifier = Modifier.fillMaxSize().verticalScroll(scroll),
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -173,3 +200,5 @@ private fun Terminal(
         }
     }
 }
+
+private const val SAMPLE = 100

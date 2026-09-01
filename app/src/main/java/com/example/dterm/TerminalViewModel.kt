@@ -35,6 +35,31 @@ class TerminalViewModel : ViewModel() {
     private var connection: DtermConnection? = null
     private var worker: Job? = null
 
+    // What the shell believes the window is. The view measures the real thing
+    // and calls resize(); until it does, this is only a starting guess.
+    private var rows = 24
+    private var cols = 80
+
+    /**
+     * Tells the shell how big the window actually is.
+     *
+     * This is not cosmetic. Programs that draw a full screen — an editor, a
+     * pager, anything with a status bar — ask the kernel for the window size
+     * and lay themselves out to it. A wrong size means they draw off the edge
+     * or wrap in the middle of a line, no matter how good the renderer is.
+     */
+    fun resize(rows: Int, cols: Int) {
+        if (rows == this.rows && cols == this.cols) return
+
+        this.rows = rows
+        this.cols = cols
+
+        val link = connection ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { link.resize(rows, cols) }
+        }
+    }
+
     fun connect(host: String, port: Int, secret: String, session: String) {
         if (state.value.status != Status.DISCONNECTED) return
 
@@ -49,7 +74,7 @@ class TerminalViewModel : ViewModel() {
                 connection = link
 
                 try {
-                    link.open(ROWS, COLS)
+                    link.open(rows, cols)
                     state.value = state.value.copy(status = Status.CONNECTED, message = "")
 
                     link.readLoop { chunk ->
@@ -98,10 +123,4 @@ class TerminalViewModel : ViewModel() {
         super.onCleared()
     }
 
-    private companion object {
-        // Fixed for now. A real client would measure the text area and send a
-        // RESIZE whenever the keyboard opens or the phone rotates.
-        const val ROWS = 40
-        const val COLS = 80
-    }
 }
