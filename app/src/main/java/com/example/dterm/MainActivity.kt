@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -72,7 +73,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             DtermTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
+                // enableEdgeToEdge turns off the window's own inset handling,
+                // which is what makes windowSoftInputMode="adjustResize" stop
+                // working. imePadding gives the keyboard its space back, and
+                // shrinking the terminal is what triggers the RESIZE the shell
+                // needs to lay itself out to what is still visible.
+                Scaffold(modifier = Modifier.fillMaxSize().imePadding()) { padding ->
                     TerminalScreen(Modifier.padding(padding))
                 }
             }
