@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Dterm" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- No values-night variant: the app is dark at every system setting, so a
+         second definition could only drift out of step with this one. -->
+    <style name="Theme.Dterm" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+    </style>
 </resources>
