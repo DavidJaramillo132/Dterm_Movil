@@ -53,7 +53,33 @@ class Recall(context: Context) {
         }.apply()
     }
 
+    /** Addresses that have reached a server before, most recent first. */
+    fun recentHosts(): List<String> =
+        store.getString(RECENT, "").orEmpty()
+            .split("\n")
+            .filter { it.isNotBlank() }
+
+    /**
+     * Records an address that actually worked.
+     *
+     * Only a successful connection counts. The same machine is often reachable
+     * at two addresses — one on the local network, another over a tunnel — and
+     * which one applies changes when you walk out of the building. Keeping the
+     * ones that worked is what makes that switch a tap instead of retyping,
+     * while a typo tried once never earns a place in the list.
+     */
+    fun remember(host: String) {
+        val address = host.trim()
+        if (address.isEmpty()) return
+
+        val updated = (listOf(address) + recentHosts().filter { it != address }).take(LIMIT)
+        store.edit().putString(RECENT, updated.joinToString("\n")).apply()
+    }
+
     private companion object {
+        /** Enough for a local address and a tunnel, with room to spare. */
+        const val LIMIT = 4
+        const val RECENT = "recent_hosts"
         const val HOST = "host"
         const val PORT = "port"
         const val SECRET = "secret"

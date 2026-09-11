@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -132,10 +133,18 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun TerminalScreen(modifier: Modifier = Modifier, model: TerminalViewModel = viewModel()) {
     val state by model.uiState.collectAsState()
+    val context = LocalContext.current
+    val recall = remember(context) { Recall(context) }
+
+    // Recorded here rather than on the button, because reaching CONNECTED is
+    // the only proof the address was the right one.
+    LaunchedEffect(state.status, state.host) {
+        if (state.status == TerminalViewModel.Status.CONNECTED) recall.remember(state.host)
+    }
 
     when (state.status) {
         TerminalViewModel.Status.DISCONNECTED ->
-            ConnectScreen(state, modifier, model::connect)
+            ConnectScreen(state, recall, modifier, model::connect)
 
         TerminalViewModel.Status.CONNECTING ->
             Connecting(state, modifier, model::disconnect)
@@ -150,13 +159,13 @@ fun TerminalScreen(modifier: Modifier = Modifier, model: TerminalViewModel = vie
 @Composable
 private fun ConnectScreen(
     state: TerminalViewModel.UiState,
+    recall: Recall,
     modifier: Modifier = Modifier,
     onConnect: (String, Int, String, String) -> Unit,
 ) {
-    val context = LocalContext.current
-    val recall = remember(context) { Recall(context) }
     var form by remember { mutableStateOf(recall.load()) }
     var reveal by remember { mutableStateOf(false) }
+    val recent = remember { recall.recentHosts() }
 
     Column(
         modifier = modifier
@@ -183,6 +192,17 @@ private fun ConnectScreen(
             label = "Host",
             placeholder = "192.168.1.10",
         )
+
+        if (recent.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                recent.forEach { address ->
+                    HostChip(address, address == form.host) { form = form.copy(host = address) }
+                }
+            }
+        }
 
         Field(
             value = form.port,
@@ -259,6 +279,28 @@ private fun ConnectScreen(
 
         state.problem?.let { Verdict(it, state.session) }
     }
+}
+
+/**
+ * An address that has worked before.
+ *
+ * The same machine answers at one address on the local network and another
+ * through a tunnel, and which one applies changes when you leave the building.
+ */
+@Composable
+private fun HostChip(address: String, current: Boolean, onPick: () -> Unit) {
+    Text(
+        text = address,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (current) Ink else Bone2,
+        modifier = Modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .background(if (current) Bone else Ink2, RoundedCornerShape(6.dp))
+            .clickable(onClick = onPick)
+            .semantics { contentDescription = "Use $address" }
+            .padding(horizontal = 14.dp)
+            .wrapContentHeight(Alignment.CenterVertically),
+    )
 }
 
 /** What ended the last connection, said in the interface's voice. */
