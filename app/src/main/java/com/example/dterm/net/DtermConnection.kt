@@ -57,7 +57,7 @@ class DtermConnection(
 
         when (val verdict = input.next().type) {
             FrameType.AUTH_OK -> Unit
-            FrameType.AUTH_FAIL -> throw ProtocolException("the server rejected the shared secret")
+            FrameType.AUTH_FAIL -> throw ProtocolException(REJECTED_SECRET)
             else -> throw ProtocolException("expected AUTH_OK, got $verdict")
         }
 
@@ -69,8 +69,14 @@ class DtermConnection(
      * Reads until the peer hangs up or the connection is closed from another
      * thread. PING is answered here so that a session sitting idle on screen
      * does not get dropped for being silent.
+     *
+     * [onFrame] fires for every frame, PING included. An idle session produces
+     * no output for minutes at a time, so output alone cannot tell a live link
+     * from a dead one; the exchange of pings is the only evidence there is.
+     * It comes first in the parameter list so that the older `readLoop { }`
+     * call shape still binds its trailing lambda to [onOutput].
      */
-    fun readLoop(onOutput: (ByteArray) -> Unit) {
+    fun readLoop(onFrame: () -> Unit = {}, onOutput: (ByteArray) -> Unit) {
         val input = reader ?: throw IllegalStateException("open() was never called")
 
         while (true) {
@@ -79,6 +85,8 @@ class DtermConnection(
             } catch (timeout: SocketTimeoutException) {
                 throw IOException("the server stopped responding", timeout)
             }
+
+            onFrame()
 
             when (frame.type) {
                 FrameType.OUTPUT -> onOutput(frame.payload)
@@ -102,8 +110,15 @@ class DtermConnection(
         runCatching { socket.close() }
     }
 
-    private companion object {
-        const val CONNECT_TIMEOUT_MS = 5_000
-        const val READ_TIMEOUT_MS = 120_000
+    internal companion object {
+        /**
+         * A rejected secret arrives as an ordinary ProtocolException, so the
+         * only thing separating it from any other handshake failure is this
+         * text. Naming it keeps the caller that classifies it from drifting.
+         */
+        const val REJECTED_SECRET = "the server rejected the shared secret"
+
+        private const val CONNECT_TIMEOUT_MS = 5_000
+        private const val READ_TIMEOUT_MS = 120_000
     }
 }

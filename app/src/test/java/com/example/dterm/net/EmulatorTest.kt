@@ -67,6 +67,77 @@ class EmulatorTest {
         assertEquals(listOf("frame 1"), term.lines())
     }
 
+    // --------------------------------------------------------------- cursor
+
+    @Test
+    fun `the cursor sits just past the text that was written`() {
+        val term = emulator().apply { write("hello") }
+
+        assertEquals(0, term.cursorLine)
+        assertEquals(5, term.cursorColumn)
+    }
+
+    @Test
+    fun `the cursor follows an explicit position sequence`() {
+        // CSI counts rows and columns from one, the grid from zero.
+        val term = emulator().apply { write("$esc[3;5H") }
+
+        assertEquals(2, term.cursorLine)
+        assertEquals(4, term.cursorColumn)
+    }
+
+    @Test
+    fun `the cursor line counts the history once the screen has scrolled`() {
+        // The reported line indexes snapshot(), which puts the two scrolled-off
+        // rows above the screen. Reporting the grid row instead would draw the
+        // cursor two rows too high.
+        val term = emulator(rows = 3, cols = 20).apply {
+            write("one\r\ntwo\r\nthree\r\nfour\r\nfive")
+        }
+
+        assertEquals(listOf("one", "two", "three", "four", "five"), term.lines())
+        assertEquals(4, term.cursorLine)
+        assertEquals(4, term.cursorColumn)
+        assertEquals("five", term.snapshot()[term.cursorLine].joinToString("") { it.text })
+    }
+
+    @Test
+    fun `the alternate screen reports the cursor without any history`() {
+        val term = emulator(rows = 3, cols = 20).apply {
+            write("one\r\ntwo\r\nthree\r\nfour")
+            write("$esc[?1049h")
+            write("$esc[2;3Hx")
+        }
+
+        assertEquals(1, term.cursorLine)
+        assertEquals(3, term.cursorColumn)
+    }
+
+    @Test
+    fun `a program can hide the cursor and bring it back`() {
+        val term = emulator()
+
+        assertTrue(term.cursorVisible)
+
+        term.write("$esc[?25l")
+        assertFalse(term.cursorVisible)
+
+        term.write("$esc[?25h")
+        assertTrue(term.cursorVisible)
+    }
+
+    @Test
+    fun `a full reset shows the cursor again`() {
+        // A program killed between hiding and showing would otherwise leave the
+        // cursor invisible for whatever runs next.
+        val term = emulator().apply {
+            write("$esc[?25l")
+            write("${esc}c")
+        }
+
+        assertTrue(term.cursorVisible)
+    }
+
     // -------------------------------------------------------------- erasing
 
     @Test

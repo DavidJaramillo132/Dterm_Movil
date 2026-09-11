@@ -78,6 +78,7 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
     private var inverse = false
 
     private var autoWrap = true
+    private var showCursor = true
 
     // Writing in the last column does not move the cursor off the line. The
     // wrap happens when the NEXT character arrives, which is what keeps a line
@@ -85,6 +86,20 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
     private var wrapPending = false
 
     val onAlternateScreen: Boolean get() = saved != null
+
+    // The cursor, in the coordinates of snapshot() rather than of the grid.
+    // A caller drawing it has the snapshot in hand and nothing else, so giving
+    // it the raw grid row would put the cursor in the wrong place on any screen
+    // that has scrolled.
+
+    /** Index into the list snapshot() returns. */
+    val cursorLine: Int get() = if (onAlternateScreen) row else scrollback.size + row
+
+    /** Column within that row. */
+    val cursorColumn: Int get() = col
+
+    /** False while a program has asked for the cursor to be hidden. */
+    val cursorVisible: Boolean get() = showCursor
 
     // ---------------------------------------------------------------- input
 
@@ -228,6 +243,9 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
         for (value in values) {
             when (value) {
                 7 -> autoWrap = on
+                // Full-screen programs hide the cursor while they repaint, so
+                // that it is not seen skipping across the screen mid-frame.
+                25 -> showCursor = on
                 // The alternate screen is why `vim` leaves your scrollback
                 // untouched when it exits: it draws on a second grid entirely.
                 1047, 1049 -> if (on) enterAlternate() else leaveAlternate()
@@ -386,6 +404,9 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
         top = 0
         bottom = rows - 1
         autoWrap = true
+        // A program killed between ?25l and ?25h would otherwise leave the
+        // cursor hidden for whatever runs next.
+        showCursor = true
         resetGraphics()
     }
 
