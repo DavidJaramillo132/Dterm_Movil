@@ -393,18 +393,38 @@ class EmulatorTest {
     }
 
     @Test
-    fun `shrinking and growing repeatedly leaves the screen alone`() {
-        // What the soft keyboard does as it slides open: the viewport loses
-        // rows for a few frames and gets them back.
-        val term = emulator(rows = 10, cols = 40).apply { write("prompt$ ") }
-        val before = term.lines()
+    fun `the empty rows below the prompt are not part of the transcript`() {
+        // The grid is always as tall as the window. In a scrolling view its
+        // unused rows read as a wall of blank space under everything printed.
+        val term = emulator(rows = 30, cols = 46).apply { write("user@host:~$ ") }
 
-        repeat(12) {
-            term.resize(6, 40)
-            term.resize(10, 40)
+        assertEquals(1, term.snapshot().size)
+    }
+
+    @Test
+    fun `a window that shrinks and grows again leaves no blank lines behind`() {
+        // What a soft keyboard does. Taking rows off the top to make room for
+        // empty ones at the bottom pushes the prompt into history and leaves
+        // the gap on screen for good.
+        val term = emulator(rows = 30, cols = 46).apply { write("user@host:~$ ") }
+
+        repeat(4) {
+            term.resize(18, 46)
+            term.resize(30, 46)
         }
 
-        assertEquals(before, term.lines())
+        assertEquals(1, term.snapshot().size)
+    }
+
+    @Test
+    fun `a full-screen program keeps every row it was given`() {
+        // On the alternate screen the blank rows are layout, not leftovers.
+        val term = emulator(rows = 12, cols = 40).apply {
+            write("$esc[?1049h")
+            write("a status line")
+        }
+
+        assertEquals(12, term.snapshot().size)
     }
 
     @Test

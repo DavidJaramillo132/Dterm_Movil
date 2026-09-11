@@ -47,6 +47,12 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
             inverse = inverse.copyOf(size)
         }
 
+        /** Nothing written, and no colour laid down either. */
+        fun isBlank(): Boolean {
+            for (i in chars.indices) if (chars[i] != ' ' || bg[i] != 0) return false
+            return true
+        }
+
         fun clear(from: Int, to: Int, fg: Int, bg: Int) {
             for (i in from until to) {
                 chars[i] = ' '
@@ -424,7 +430,17 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
         }
 
         while (screen.size > newRows) {
-            // Lines pushed off the top are history, exactly as when scrolling.
+            // Give up an empty row below the cursor before giving up the top of
+            // the screen. Taking from the top sends real lines into history to
+            // make room for nothing, which is how a keyboard opening and
+            // closing left a band of blank lines behind for good.
+            val last = screen.size - 1
+
+            if (last > row && screen[last].isBlank()) {
+                screen.removeAt(last)
+                continue
+            }
+
             val gone = screen.removeAt(0)
             if (!onAlternateScreen) scrollback.addLast(gone)
             if (row > 0) row--
@@ -457,8 +473,18 @@ class Emulator(rows: Int = 24, cols: Int = 80) {
      * program owns every row, so anything above it would be a leftover.
      */
     fun snapshot(): List<List<Span>> {
-        val lines = if (onAlternateScreen) screen else scrollback + screen
-        return lines.map(::spansOf)
+        // A full-screen program owns every row it was given, blank ones
+        // included: that is its layout.
+        if (onAlternateScreen) return screen.map(::spansOf)
+
+        // A shell's screen, by contrast, is mostly empty below the prompt.
+        // Those rows exist in the grid but are not part of the transcript, and
+        // in a scrolling view they read as a wall of empty space under
+        // everything that was ever printed.
+        var end = screen.size
+        while (end > row + 1 && screen[end - 1].isBlank()) end--
+
+        return (scrollback + screen.subList(0, end)).map(::spansOf)
     }
 
     private fun spansOf(line: Line): List<Span> {
