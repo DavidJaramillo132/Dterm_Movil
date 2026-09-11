@@ -100,6 +100,9 @@ private const val SAMPLE = 100
 /** Invisible characters kept in the input field so Backspace is observable. */
 private const val PAD = 8
 
+/** How long the viewport must hold one size before the shell is told. */
+private const val SETTLE_MS = 250L
+
 /** Silence beyond this reads as "probably gone" on the lifeline. */
 private const val SILENT_MS = 45_000f
 
@@ -485,6 +488,20 @@ private fun Viewport(
     // Following the output is only wanted while the reader is already at the
     // end. Someone who scrolled up to read what a running job printed must not
     // be dragged back down thirty times a second.
+    // The keyboard slides open over a few hundred milliseconds, and the
+    // viewport is a different size on every frame of that slide. Reporting each
+    // one sends the shell a burst of SIGWINCH, and it redraws its prompt for
+    // every single one — which is what filled the screen with repeated prompts.
+    // Only the size it comes to rest at is worth telling the shell about.
+    var measured by remember { mutableStateOf(0 to 0) }
+    LaunchedEffect(measured) {
+        val (rows, cols) = measured
+        if (rows > 0 && cols > 0) {
+            delay(SETTLE_MS)
+            onResize(rows, cols)
+        }
+    }
+
     val atBottom by remember {
         derivedStateOf { vertical.maxValue - vertical.value < 8 }
     }
@@ -500,7 +517,7 @@ private fun Viewport(
             .onSizeChanged { size ->
                 val cols = (size.width / cell.first).toInt().coerceIn(20, 500)
                 val rows = (size.height / cell.second).toInt().coerceIn(4, 200)
-                onResize(rows, cols)
+                measured = rows to cols
             }
     ) {
         // The terminal is a grid whose size is reported to the shell, so the

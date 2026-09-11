@@ -393,6 +393,21 @@ class EmulatorTest {
     }
 
     @Test
+    fun `shrinking and growing repeatedly leaves the screen alone`() {
+        // What the soft keyboard does as it slides open: the viewport loses
+        // rows for a few frames and gets them back.
+        val term = emulator(rows = 10, cols = 40).apply { write("prompt$ ") }
+        val before = term.lines()
+
+        repeat(12) {
+            term.resize(6, 40)
+            term.resize(10, 40)
+        }
+
+        assertEquals(before, term.lines())
+    }
+
+    @Test
     fun `clear drops the history as well as the screen`() {
         val term = emulator(rows = 2, cols = 20).apply {
             write("one\r\ntwo\r\nthree")
