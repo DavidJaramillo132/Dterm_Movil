@@ -22,6 +22,8 @@ Built as a learning project, not as a Termux replacement — see
 
 ## Build
 
+For building, installing and connecting step by step, see [START.md](START.md).
+
 ```sh
 ./gradlew assembleDebug     # APK
 ./gradlew installDebug      # build and install on the connected device
